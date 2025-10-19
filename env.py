@@ -1,3 +1,5 @@
+from typing import List
+
 import gymnasium as gym
 from gymnasium.spaces import MultiDiscrete, Discrete, Box
 import time
@@ -22,14 +24,17 @@ class Env2048(gym.Env):
 
     GRID_SIZE = 4
     ACTIONS = 4
-    MAX_BOX_NUMBER = 2048  
 
-    def __init__(self, render_mode=None):
+    def __init__(self, render_mode=None, max_box_number: List[int]=[2048]):
         super(Env2048).__init__()
 
         self.__base_grid = self.__make_grid__()
 
-        self.observation_space = MultiDiscrete([self.MAX_BOX_NUMBER + 1] * self.__base_grid.shape[0]**2)
+        self.max_box_number = list(max_box_number) if not isinstance(max_box_number, list) else max_box_number
+
+        self.observation_space = Box(-10, 10, (self.GRID_SIZE ** 2,), dtype=np.float32)
+
+        #self.observation_space = MultiDiscrete([self.max_box_number + 1] * self.__base_grid.shape[0]**2)
 
         self.action_space = Discrete(self.ACTIONS)
 
@@ -76,12 +81,13 @@ class Env2048(gym.Env):
 
         self.__init_grid__()
         observation = self.__game_grid.flatten()
+        observation = (observation - observation.min()) / (observation.std() + 1e-10)
         self.steps = 0
         self.score = 0
 
         self._last_render_time = 0
 
-        return observation, {}
+        return observation.astype(np.float32), {}
 
 
     def step(self, action: int):
@@ -104,16 +110,18 @@ class Env2048(gym.Env):
 
         observation = self.__game_grid.flatten()
 
-        info = {"changed": changed}
+        info = {}
 
-        if 2048 in self.__game_grid:
+        obj_check = [i in set(observation) for i in self.max_box_number]
+
+        if any(obj_check):
             terminated = True
-            reward += 1000
+            reward = self.score
         elif self.__check_lost():
             terminated = True
-            reward -= 100
-        elif not changed:
-            reward -= 10
+            reward = -100
+
+        observation = (observation - observation.min()) / (observation.std() + 1e-10)
 
         return observation, reward, terminated, truncated, info
     
@@ -135,6 +143,33 @@ class Env2048(gym.Env):
         
         return True
 
+    def action_masks(self) -> np.ndarray:
+
+        mask = np.zeros(self.ACTIONS, dtype=bool)
+
+        original_grid = self.__game_grid.copy()
+        original_score = self.score
+
+        # UP (0)
+        self.__game_grid = original_grid.copy()
+        mask[0] = self.__move_up()
+
+        # RIGHT (1)
+        self.__game_grid = original_grid.copy()
+        mask[1] = self.__move_right()
+
+        # DOWN (2)
+        self.__game_grid = original_grid.copy()
+        mask[2] = self.__move_down()
+
+        # LEFT (3)
+        self.__game_grid = original_grid.copy()
+        mask[3] = self.__move_left()
+
+        self.__game_grid = original_grid
+        self.score = original_score
+
+        return mask
 
 
     def __compress(self):
@@ -158,7 +193,6 @@ class Env2048(gym.Env):
         self.__game_grid = new_mat
 
         return changed
-    
 
     def __merge_and_increment_score(self):
 
@@ -167,15 +201,13 @@ class Env2048(gym.Env):
             for j in range(self.GRID_SIZE - 1):
 
                 if self.__game_grid[i, j] == self.__game_grid[i, j + 1] and self.__game_grid[i, j] != 0:
-
                     self.__game_grid[i, j] = self.__game_grid[i, j] * 2
                     self.score += self.__game_grid[i, j]
                     self.__game_grid[i, j + 1] = 0
 
                     changed = True
-        
+
         return changed
-    
 
     def __move_left(self):
 
@@ -186,7 +218,6 @@ class Env2048(gym.Env):
         self.__compress()
 
         return changed1 or changed2
-    
 
     def __move_right(self):
 
@@ -197,8 +228,7 @@ class Env2048(gym.Env):
         self.__game_grid = np.flip(self.__game_grid, axis=1)
 
         return changed
-    
-    
+
     def __move_up(self):
 
         self.__game_grid = self.__game_grid.T
@@ -208,7 +238,6 @@ class Env2048(gym.Env):
         self.__game_grid = self.__game_grid.T
 
         return changed
-    
 
     def __move_down(self):
 
@@ -219,7 +248,6 @@ class Env2048(gym.Env):
         self.__game_grid = self.__game_grid.T
 
         return changed
-    
 
     def __update_grid(self, move: str):
 
